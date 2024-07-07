@@ -8,17 +8,25 @@ import org.gradoop.temporal.io.impl.csv.TemporalCSVDataSink;
 import org.gradoop.temporal.io.impl.csv.TemporalCSVDataSource;
 import org.gradoop.temporal.model.impl.TemporalGraph;
 import org.gradoop.temporal.util.TemporalGradoopConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 
 public class Cum_BaselineExecutor extends BaselineExecutor {
 
+    private static final Logger log = LoggerFactory.getLogger(Cum_BaselineExecutor.class);
+
     private static TemporalGraph loadTemporalGraph(String inputDirectory, TemporalGradoopConfig config) throws Exception {
+        log.info("Loading temporal graph from disk.");
         TemporalDataSource dataSource = new TemporalCSVDataSource(inputDirectory, config);
-        return dataSource.getTemporalGraph();
+        TemporalGraph temporalGraph = dataSource.getTemporalGraph();
+        log.info("Loaded temporal graph.");
+        return temporalGraph;
     }
 
     public static void main(String[] args) throws Exception {
@@ -51,15 +59,34 @@ public class Cum_BaselineExecutor extends BaselineExecutor {
 
         final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
         final TemporalGradoopConfig config = TemporalGradoopConfig.createConfig(env);
+
         TemporalGraph inputGraph;
         for (int i = start; i <= end; i += increment) {
+            System.out.println("Executing ts := " + i);
+            long s = System.currentTimeMillis();
             inputGraph = loadTemporalGraph(inputDirectory + i, config);
-            inputGraph.callForGraph(new AlgorithmExecutor<>(algorithm, getSourceVertexId(inputGraph, srcVertexId), i))
-                    .writeTo(new TemporalCSVDataSink(outputDirectory + "/results/" + i, config), false);
+            inputGraph.getVertices().first(5);
+            long e = System.currentTimeMillis();
+            System.out.println("Load:= " + (e - s));
 
-            br.write(i + "," + env.execute().getNetRuntime() + "\n");
+            s = System.currentTimeMillis();
+            TemporalGraph temporalGraph = inputGraph.callForGraph(
+                    new AlgorithmExecutor<>(algorithm, getSourceVertexId(inputGraph, srcVertexId), i)
+            );
+            temporalGraph.getVertices().first(10);
+            e = System.currentTimeMillis();
+            System.out.println("Process:= " + (e - s));
+
+            s = System.currentTimeMillis();
+            temporalGraph.writeTo(new TemporalCSVDataSink(outputDirectory + "/results-july/" + i, config), false);
+            e = System.currentTimeMillis();
+            System.out.println("Write:= " + (e - s));
+
+            String log = i + "," + env.execute().getNetRuntime(TimeUnit.SECONDS) + "\n";
+
+            br.write(log);
             br.flush();
-            if (i % 5 == 0) System.out.println("Finished " + i + " iterations.");
+            System.out.println("Finished " + i + " iterations.");
         }
         br.close();
         fr.close();

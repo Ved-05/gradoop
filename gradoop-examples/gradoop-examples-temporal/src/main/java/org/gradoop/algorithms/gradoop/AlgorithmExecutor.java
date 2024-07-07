@@ -16,6 +16,8 @@ import org.gradoop.flink.algorithms.gelly.GradoopGellyAlgorithm;
 import org.gradoop.flink.model.api.epgm.BaseGraph;
 import org.gradoop.flink.model.api.epgm.BaseGraphCollection;
 import org.gradoop.flink.model.impl.functions.epgm.Id;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class AlgorithmExecutor<
         G extends GraphHead,
@@ -29,6 +31,8 @@ public class AlgorithmExecutor<
     private final int maxIterations;
     private final GradoopId srcVertexId;
 
+    private static final Logger log = LoggerFactory.getLogger(AlgorithmExecutor.class);
+
     public AlgorithmExecutor(String algorithmToExecute, GradoopId srcVertexId, int maxIterations) {
         super(new GradoopVertexToJellyVertex<>(), new GradoopEdgeToGellyEdge<>());
         this.algorithmToExecute = algorithmToExecute;
@@ -36,9 +40,39 @@ public class AlgorithmExecutor<
         this.srcVertexId = srcVertexId;
     }
 
+    @Override
+    public TG execute(TG graph) {
+        log.info("Processing the graph.");
+        this.currentGraph = graph;
+
+        long s = System.currentTimeMillis();
+        Graph<GradoopId, Tuple2<Long, Long>, Tuple3<Integer, Long, Long>> gradoopIdTuple2Tuple3Graph = transformToGelly(graph);
+        gradoopIdTuple2Tuple3Graph.getVertices().first(5);
+        System.out.println("TG -> LG:=" + (System.currentTimeMillis() - s));
+
+        try {
+            return executeInGelly(gradoopIdTuple2Tuple3Graph);
+        } catch (Exception e) {
+            log.error("Exception while processing graph.");
+            throw new RuntimeException(e);
+        }
+    }
+
     public TG executeInGelly(Graph<GradoopId, Tuple2<Long, Long>, Tuple3<Integer, Long, Long>> gellyGraph) throws Exception {
+        log.info("Gelly execution started...");
+        long s = System.currentTimeMillis();
         DataSet<V> updatedVertices = executeAlgorithm(gellyGraph);
-        return this.currentGraph.getFactory().fromDataSets(this.currentGraph.getGraphHead(), updatedVertices, this.currentGraph.getEdges());
+        updatedVertices.first(5);
+        long e = System.currentTimeMillis();
+        System.out.println("Algorithm + PostProcess:= " + (s - e));
+
+        s = System.currentTimeMillis();
+        TG tg = this.currentGraph.getFactory().fromDataSets(this.currentGraph.getGraphHead(), updatedVertices, this.currentGraph.getEdges());
+        tg.getVertices().first(5);
+        e = System.currentTimeMillis();
+        System.out.println("GG -> TG:= " + (s - e));
+        log.info("Gelly execution finished.");
+        return tg;
     }
 
     private DataSet<V> executeAlgorithm(Graph<GradoopId, Tuple2<Long, Long>, Tuple3<Integer, Long, Long>> gellyGraph) throws Exception {
@@ -58,8 +92,12 @@ public class AlgorithmExecutor<
                         .equalTo(new Id<>())
                         .with(new AttributeJoin<>());
             case "SSSP":
-                return (new SingleSourceShortestPath<>(srcVertexId, this.maxIterations))
-                        .run(gellyGraph)
+                long algStart = System.currentTimeMillis();
+                DataSet<Vertex<GradoopId, Integer>> execResults = (new SingleSourceShortestPath<>(srcVertexId, this.maxIterations)).run(gellyGraph);
+                execResults.first(5);
+                System.out.println("Algorithm(Exec):= " + (System.currentTimeMillis() - algStart));
+
+                return execResults
                         .join(this.currentGraph.getVertices())
                         .where(new int[]{0})
                         .equalTo(new Id<>())
